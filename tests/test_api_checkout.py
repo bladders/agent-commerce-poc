@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from conftest import DEMO_USER, INITIAL_BALANCE_CENTS, CatalogItem
+from conftest import DEMO_USER, INITIAL_BALANCE, CatalogItem
 
 
 def _create_session(api: httpx.Client, items: list[dict], policy: dict | None = None) -> dict:
@@ -97,19 +97,19 @@ class TestCompleteCheckout:
         assert result["status"] == "completed"
         assert result["order"]["status"] == "confirmed"
         balance_after = result["_poc"]["balance_tokens"]
-        assert balance_after == INITIAL_BALANCE_CENTS + cheapest.amount, (
-            f"Expected balance {INITIAL_BALANCE_CENTS} + {cheapest.amount} = "
-            f"{INITIAL_BALANCE_CENTS + cheapest.amount}, got {balance_after}"
+        assert balance_after == INITIAL_BALANCE + cheapest.tokens, (
+            f"Expected balance {INITIAL_BALANCE} + {cheapest.tokens} = "
+            f"{INITIAL_BALANCE + cheapest.tokens}, got {balance_after}"
         )
 
     def test_complete_multi_item_credits_total_amount(self, api: httpx.Client, catalog: list[CatalogItem], reset_balance):
         items = [{"id": catalog[0].id}, {"id": catalog[1].id}]
         co = _create_session(api, items)
-        expected_credit = catalog[0].amount + catalog[1].amount
+        expected_credits = catalog[0].tokens + catalog[1].tokens
         r = api.post(f"/checkout_sessions/{co['id']}/complete", json={})
         assert r.status_code == 200
         balance_after = r.json()["_poc"]["balance_tokens"]
-        assert balance_after == INITIAL_BALANCE_CENTS + expected_credit
+        assert balance_after == INITIAL_BALANCE + expected_credits
 
     def test_complete_nonexistent(self, api: httpx.Client):
         r = api.post("/checkout_sessions/cs_nonexistent/complete", json={})
@@ -141,5 +141,5 @@ class TestCancelCheckout:
 
     def test_cancel_does_not_affect_balance(self, api: httpx.Client, cheapest: CatalogItem, reset_balance):
         _create_session(api, [{"id": cheapest.id}])
-        bal_before = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["balance_cents"]
-        assert bal_before == INITIAL_BALANCE_CENTS
+        bal_before = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["credits"]
+        assert bal_before == INITIAL_BALANCE

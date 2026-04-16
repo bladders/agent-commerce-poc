@@ -46,7 +46,7 @@ comparison, timing_deferred, other, etc.) and a trace_summary (the buyer's \
 own words). Always ask the user WHY they want to cancel before calling this.
 - refund_checkout_session: refund a COMPLETED checkout. Use when the buyer \
 wants money back after payment succeeded. Pass the checkout_session_id and reason.
-- get_balance: check a user's current token balance (POC-specific).
+- get_balance: check a user's current credit balance (returns credit count, not dollars).
 
 **Stripe account tools** — query the Stripe account (scoped to current user):
 - stripe_list_products, stripe_list_prices: see what's in the Stripe catalog

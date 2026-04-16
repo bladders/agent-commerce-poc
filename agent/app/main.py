@@ -294,26 +294,26 @@ def run_server() -> None:
 
         _log_trace(trace, checkouts, req.session_id)
 
-        # Auto-burn: calculate cost in cents and consume
+        # Auto-burn: 1 credit per agent interaction
         total_llm_tokens = 0
         for step in trace:
             if step["type"] == "llm":
                 usage = step.get("usage", {})
                 total_llm_tokens += (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
 
-        cost_cents = max(10, total_llm_tokens // 100)
+        cost_credits = 1
         burn_result = None
         try:
             from app.tools import acp_consume_tokens
             burn_result = acp_consume_tokens(
                 user_id="demo_user",
-                tokens=cost_cents,
+                tokens=cost_credits,
                 reason=f"chat:{req.session_id}",
             )
             log.info(
-                "BURN [session=%s] llm_tokens=%d → $%.2f | balance=$%.2f",
-                req.session_id, total_llm_tokens, cost_cents / 100,
-                burn_result.get("balance", 0) / 100,
+                "BURN [session=%s] llm_tokens=%d → %d credit | balance=%d credits",
+                req.session_id, total_llm_tokens, cost_credits,
+                burn_result.get("balance", 0),
             )
         except Exception as e:
             log.warning("Token burn failed: %s", e)
@@ -335,7 +335,7 @@ def run_server() -> None:
             "checkouts": checkouts,
             "trace": trace,
             "session_id": req.session_id,
-            "cost_cents": cost_cents,
+            "cost_credits": cost_credits,
             "llm_tokens_used": total_llm_tokens,
             "balance": burn_result.get("balance") if burn_result else None,
         }

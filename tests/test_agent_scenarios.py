@@ -14,7 +14,7 @@ import time
 import pytest
 import httpx
 
-from conftest import AgentSession, INITIAL_BALANCE_CENTS, DEMO_USER
+from conftest import AgentSession, INITIAL_BALANCE, DEMO_USER
 from scenarios import SCENARIOS, Scenario
 
 MAX_RETRIES = 2  # total attempts = 1 + MAX_RETRIES
@@ -32,10 +32,10 @@ def _run_scenario(scenario: Scenario, api: httpx.Client, agent: httpx.Client) ->
 
     sess.reset()
 
-    if scenario.pre_balance_cents is not None:
+    if scenario.pre_balance_credits is not None:
         api.post(
             "/api/v1/reset-balance",
-            json={"user_id": DEMO_USER, "amount": scenario.pre_balance_cents},
+            json={"user_id": DEMO_USER, "amount": scenario.pre_balance_credits},
         )
 
     failures: list[str] = []
@@ -76,7 +76,7 @@ def _run_with_retries(
         if not failures:
             return []
         if attempt < max_retries:
-            api.post("/api/v1/reset-balance", json={"user_id": DEMO_USER, "amount": INITIAL_BALANCE_CENTS})
+            api.post("/api/v1/reset-balance", json={"user_id": DEMO_USER, "amount": INITIAL_BALANCE})
     return failures
 
 

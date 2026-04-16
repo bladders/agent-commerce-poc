@@ -14,7 +14,7 @@ import pytest
 API_BASE = "http://localhost:8000"
 AGENT_BASE = "http://localhost:8080"
 DEMO_USER = "demo_user"
-INITIAL_BALANCE_CENTS = 2000  # $20.00
+INITIAL_BALANCE = 20  # 20 credits
 
 
 @dataclass
@@ -35,7 +35,7 @@ class AgentResponse:
     checkouts: list[dict]
     trace: list[dict]
     session_id: str
-    cost_cents: int | None
+    cost_credits: int | None
     llm_tokens_used: int | None
     balance: int | None
     raw: dict
@@ -65,7 +65,7 @@ class AgentSession:
             checkouts=j.get("checkouts", []),
             trace=j.get("trace", []),
             session_id=j.get("session_id", self.session_id),
-            cost_cents=j.get("cost_cents"),
+            cost_credits=j.get("cost_credits"),
             llm_tokens_used=j.get("llm_tokens_used"),
             balance=j.get("balance"),
             raw=j,
@@ -85,7 +85,7 @@ class AgentSession:
     def get_api_balance(self) -> int:
         r = self.api.get("/api/v1/balance", params={"user_id": DEMO_USER})
         r.raise_for_status()
-        return r.json()["balance_cents"]
+        return r.json()["credits"]
 
     def complete_checkout_via_api(self, checkout_id: str) -> dict:
         r = self.api.post(
@@ -142,10 +142,10 @@ def cheapest(catalog) -> CatalogItem:
 
 @pytest.fixture
 def reset_balance(api):
-    """Reset the demo user balance to $20.00 before each test."""
-    api.post("/api/v1/reset-balance", json={"user_id": DEMO_USER, "amount": INITIAL_BALANCE_CENTS})
+    """Reset the demo user balance to 20 credits before each test."""
+    api.post("/api/v1/reset-balance", json={"user_id": DEMO_USER, "amount": INITIAL_BALANCE})
     yield
-    api.post("/api/v1/reset-balance", json={"user_id": DEMO_USER, "amount": INITIAL_BALANCE_CENTS})
+    api.post("/api/v1/reset-balance", json={"user_id": DEMO_USER, "amount": INITIAL_BALANCE})
 
 
 @pytest.fixture
@@ -153,7 +153,7 @@ def balance(api, reset_balance) -> int:
     """Return starting balance (after reset)."""
     r = api.get("/api/v1/balance", params={"user_id": DEMO_USER})
     r.raise_for_status()
-    return r.json()["balance_cents"]
+    return r.json()["credits"]
 
 
 @pytest.fixture

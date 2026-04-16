@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from conftest import DEMO_USER, INITIAL_BALANCE_CENTS, CatalogItem
+from conftest import DEMO_USER, INITIAL_BALANCE, CatalogItem
 
 
 def _buy_and_complete(api: httpx.Client, item: CatalogItem, policy: dict | None = None) -> dict:
@@ -20,11 +20,11 @@ def _buy_and_complete(api: httpx.Client, item: CatalogItem, policy: dict | None 
 
 
 class TestRefund:
-    def test_refund_deducts_amount_cents(self, api: httpx.Client, cheapest: CatalogItem, reset_balance):
+    def test_refund_restores_credits(self, api: httpx.Client, cheapest: CatalogItem, reset_balance):
         completed = _buy_and_complete(api, cheapest)
         cs_id = completed["id"]
         bal_after_buy = completed["_poc"]["balance_tokens"]
-        assert bal_after_buy == INITIAL_BALANCE_CENTS + cheapest.amount
+        assert bal_after_buy == INITIAL_BALANCE + cheapest.tokens
 
         r = api.post("/api/v1/refund", json={
             "checkout_session_id": cs_id, "reason": "Changed my mind"
@@ -32,7 +32,7 @@ class TestRefund:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "succeeded"
-        assert data["balance_tokens"] == INITIAL_BALANCE_CENTS
+        assert data["balance_tokens"] == INITIAL_BALANCE
         assert data["checkout"]["status"] == "refunded"
 
     def test_refund_non_completed_fails(self, api: httpx.Client, cheapest: CatalogItem, reset_balance):
@@ -73,14 +73,14 @@ class TestRefund:
 
 class TestRefundBalanceConsistency:
     def test_buy_refund_balance_returns_to_original(self, api: httpx.Client, cheapest: CatalogItem, reset_balance):
-        bal_start = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["balance_cents"]
+        bal_start = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["credits"]
         completed = _buy_and_complete(api, cheapest)
         cs_id = completed["id"]
-        bal_mid = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["balance_cents"]
-        assert bal_mid == bal_start + cheapest.amount
+        bal_mid = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["credits"]
+        assert bal_mid == bal_start + cheapest.tokens
 
         api.post("/api/v1/refund", json={"checkout_session_id": cs_id, "reason": "undo"})
-        bal_end = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["balance_cents"]
+        bal_end = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["credits"]
         assert bal_end == bal_start, (
-            f"Balance after buy+refund: ${bal_end/100:.2f} != original ${bal_start/100:.2f}"
+            f"Balance after buy+refund: {bal_end} credits != original {bal_start} credits"
         )

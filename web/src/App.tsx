@@ -12,7 +12,7 @@ const AGENT_BASE = (() => {
   return "";
 })();
 
-const INITIAL_BALANCE = 2000; // $20.00
+const INITIAL_BALANCE = 20; // 20 credits
 
 /* ---------- Types ---------- */
 
@@ -57,7 +57,7 @@ type ChatEntry = {
   content: string;
   checkouts?: ACPCheckout[];
   trace?: TraceStep[];
-  costCents?: number;
+  costCredits?: number;
   llmTokensUsed?: number;
   balance?: number | null;
 };
@@ -127,13 +127,13 @@ function extractCatalogItems(trace?: TraceStep[]): CatalogItem[] | null {
   return null;
 }
 
-function extractBalanceData(trace?: TraceStep[]): { user_id: string; cents: number } | null {
+function extractBalanceData(trace?: TraceStep[]): { user_id: string; credits: number } | null {
   if (!trace) return null;
   for (const step of trace) {
     if (step.type === "tool_result" && step.name === "get_balance") {
-      const res = step.result as { user_id?: string; balance_cents?: number; tokens?: number } | undefined;
-      const cents = res?.balance_cents ?? res?.tokens;
-      if (res && cents != null) return { user_id: res.user_id || "demo_user", cents };
+      const res = step.result as { user_id?: string; credits?: number; balance_cents?: number } | undefined;
+      const credits = res?.credits ?? res?.balance_cents;
+      if (res && credits != null) return { user_id: res.user_id || "demo_user", credits };
     }
   }
   return null;
@@ -228,10 +228,12 @@ const fmtUsd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /* ========== Balance Pill ========== */
 
-function BalancePill({ cents }: { cents: number }) {
-  const color = cents > 1000 ? "#059669" : cents > 500 ? "#d97706" : "#dc2626";
-  const bg = cents > 1000 ? "#ecfdf5" : cents > 500 ? "#fffbeb" : "#fef2f2";
-  const pulse = cents <= 500 && cents > 0;
+const fmtCredits = (n: number) => `${n} credit${n === 1 ? "" : "s"}`;
+
+function BalancePill({ credits }: { credits: number }) {
+  const color = credits > 10 ? "#059669" : credits > 5 ? "#d97706" : "#dc2626";
+  const bg = credits > 10 ? "#ecfdf5" : credits > 5 ? "#fffbeb" : "#fef2f2";
+  const pulse = credits <= 5 && credits > 0;
 
   return (
     <div style={{
@@ -243,7 +245,7 @@ function BalancePill({ cents }: { cents: number }) {
       animation: pulse ? "pulse 2s ease-in-out infinite" : undefined,
     }}>
       <span style={{ fontSize: "0.7rem", opacity: 0.7, fontWeight: 500 }}>BAL</span>
-      {fmtUsd(cents)}
+      {fmtCredits(credits)}
     </div>
   );
 }
@@ -324,9 +326,9 @@ function CatalogGrid({ items, onBuy }: { items: CatalogItem[]; onBuy: (item: Cat
 
 /* ========== Balance Card (inline in chat) ========== */
 
-function BalanceInline({ cents }: { cents: number }) {
-  const color = cents > 1000 ? "#059669" : cents > 500 ? "#d97706" : "#dc2626";
-  const bg = cents > 1000 ? "#ecfdf5" : cents > 500 ? "#fffbeb" : "#fef2f2";
+function BalanceInline({ credits }: { credits: number }) {
+  const color = credits > 10 ? "#059669" : credits > 5 ? "#d97706" : "#dc2626";
+  const bg = credits > 10 ? "#ecfdf5" : credits > 5 ? "#fffbeb" : "#fef2f2";
   return (
     <div style={{
       display: "inline-flex", alignItems: "center", gap: 10,
@@ -338,13 +340,13 @@ function BalanceInline({ cents }: { cents: number }) {
         width: 40, height: 40, borderRadius: 10,
         background: color, display: "flex", alignItems: "center", justifyContent: "center",
         color: "#fff", fontWeight: 800, fontSize: "1rem",
-      }}>$</div>
+      }}>⚡</div>
       <div>
         <div style={{ fontSize: "0.72rem", color, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
           Current Balance
         </div>
         <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>
-          {fmtUsd(cents)}
+          {fmtCredits(credits)}
         </div>
       </div>
     </div>
@@ -374,7 +376,7 @@ function RefundInline({ data }: { data: RefundData }) {
           -{fmtUsd(data.amount_refunded_cents)}
         </div>
         <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: 2 }}>
-          {data.refund_id} &middot; Balance: {fmtUsd(data.balance_tokens)}
+          {data.refund_id} &middot; Balance: {fmtCredits(data.balance_tokens)}
         </div>
       </div>
     </div>
@@ -561,7 +563,7 @@ function SessionBurnBar({ spent, total }: { spent: number; total: number }) {
         fontSize: "0.68rem", color: "rgba(255,255,255,0.5)", fontWeight: 600,
         fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
       }}>
-        {fmtUsd(spent)} used
+        {spent} used
       </span>
     </div>
   );
@@ -670,13 +672,13 @@ export default function App() {
       }
 
       if (j.balance != null) setBalance(j.balance);
-      if (j.cost_cents) setTotalBurned((prev) => prev + j.cost_cents);
+      if (j.cost_credits) setTotalBurned((prev) => prev + j.cost_credits);
 
       setMessages((m) => [
         ...m,
         {
           role: "assistant", content: j.reply, checkouts: j.checkouts, trace: j.trace,
-          costCents: j.cost_cents, llmTokensUsed: j.llm_tokens_used, balance: j.balance,
+          costCredits: j.cost_credits, llmTokensUsed: j.llm_tokens_used, balance: j.balance,
         },
       ]);
     } catch (e) {
@@ -712,7 +714,7 @@ export default function App() {
       let summary = `Checkout ${verb}.`;
       if (action === "complete" && result._poc?.balance_tokens != null) {
         setBalance(result._poc.balance_tokens);
-        summary += ` Balance: ${fmtUsd(result._poc.balance_tokens)}.`;
+        summary += ` Balance: ${fmtCredits(result._poc.balance_tokens)}.`;
       }
       if (action === "complete" && result.order)
         summary += ` Order: ${result.order.id} (${result.order.status}).`;
@@ -795,7 +797,7 @@ export default function App() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <BalancePill cents={balance} />
+            <BalancePill credits={balance} />
             <button type="button" onClick={() => setPolicyOpen(!policyOpen)} style={{
               padding: "5px 12px", borderRadius: 6, border: "1px solid",
               borderColor: policyOpen ? "#a78bfa" : "rgba(255,255,255,0.2)",
@@ -826,9 +828,9 @@ export default function App() {
         <div style={{ flex: 1, overflow: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
           {messages.length === 0 && (
             <div style={{ textAlign: "center", marginTop: "4rem" }}>
-              <div style={{ fontSize: "2rem", marginBottom: 12, opacity: 0.3 }}>$</div>
+              <div style={{ fontSize: "2rem", marginBottom: 12, opacity: 0.3 }}>⚡</div>
               <p style={{ color: "#94a3b8", fontSize: "0.95rem", margin: 0, fontWeight: 500 }}>
-                Your session starts with {fmtUsd(INITIAL_BALANCE)}
+                Your session starts with {fmtCredits(INITIAL_BALANCE)}
               </p>
               <p style={{ color: "#cbd5e1", fontSize: "0.85rem", margin: "6px 0 0" }}>
                 Try: "What can I buy?" or "Show me the catalog"
@@ -863,7 +865,7 @@ export default function App() {
                       <CatalogGrid items={catalogItems} onBuy={(item) => send(`I'd like to buy ${item.name}`)} />
                     )}
                     {balanceData && (
-                      <BalanceInline cents={balanceData.cents} />
+                      <BalanceInline credits={balanceData.credits} />
                     )}
                     {refundData && (
                       <RefundInline data={refundData} />
@@ -876,7 +878,7 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                {m.role === "assistant" && m.costCents != null && (
+                {m.role === "assistant" && m.costCredits != null && (
                   <div style={{
                     display: "flex", gap: 8, fontSize: "0.72rem", color: "#94a3b8",
                     marginTop: 4, paddingLeft: 4, alignItems: "center",
@@ -885,7 +887,7 @@ export default function App() {
                       background: "#f1f5f9", padding: "1px 8px", borderRadius: 10, fontWeight: 600,
                       color: "#64748b",
                     }}>
-                      -{fmtUsd(m.costCents)}
+                      -{m.costCredits} credit{m.costCredits === 1 ? "" : "s"}
                     </span>
                     <span style={{ color: "#cbd5e1" }}>{(m.llmTokensUsed ?? 0).toLocaleString()} LLM tokens</span>
                   </div>
@@ -1270,7 +1272,7 @@ function CheckoutCard({
             </span>
             {co._poc?.balance_tokens != null && (
               <span style={{ fontSize: "0.78rem", color: "#15803d", marginLeft: 8 }}>
-                Balance: {fmtUsd(co._poc.balance_tokens)}
+                Balance: {fmtCredits(co._poc.balance_tokens)}
               </span>
             )}
           </div>

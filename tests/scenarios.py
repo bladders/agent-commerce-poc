@@ -29,7 +29,7 @@ class Scenario:
     system_policy: dict | None = None
     user_policy: dict | None = None
     tags: list[str] = field(default_factory=list)
-    pre_balance_cents: int | None = None  # override starting balance (default $20)
+    pre_balance_credits: int | None = None  # override starting balance (default 20 credits)
 
 
 # ---------------------------------------------------------------------------
@@ -473,7 +473,7 @@ SCENARIOS: list[Scenario] = [
         name="near_zero_balance_purchase",
         description="Start with $0.50 balance, attempt a purchase, agent should recognize insufficient funds",
         tags=["balance", "edge_case"],
-        pre_balance_cents=50,
+        pre_balance_credits=1,
         steps=[
             Step(
                 message="I want to buy the 25 Credits pack ($9.99). Create the checkout and complete it now, I confirm.",
@@ -609,7 +609,7 @@ SCENARIOS: list[Scenario] = [
         name="burn_depletes_to_zero",
         description="Start with minimal balance — burns should fail gracefully, not crash",
         tags=["balance", "burn", "edge_case"],
-        pre_balance_cents=30,
+        pre_balance_credits=1,
         steps=[
             Step(
                 message="Hello, what can you do for me?",
@@ -675,7 +675,7 @@ SCENARIOS: list[Scenario] = [
         name="topup_mid_conversation",
         description="Core loop: start with low balance, buy tokens, burn some, buy more, verify balance increases",
         tags=["token_economy", "topup", "lifecycle"],
-        pre_balance_cents=100,
+        pre_balance_credits=2,
         steps=[
             Step(
                 message="What's my balance?",

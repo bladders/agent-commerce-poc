@@ -405,7 +405,7 @@ TOOL_SCHEMAS: list[dict] = [
         "type": "function",
         "function": {
             "name": "get_balance",
-            "description": "Check a user's current balance in cents. Returns balance_cents (integer) and balance_display (e.g. '$20.00'). Use balance_display when showing to the user.",
+            "description": "Check a user's current credit balance. Returns 'credits' (integer) and 'balance_display' (e.g. '20 credits'). Use balance_display when showing to the user.",
             "parameters": {
                 "type": "object",
                 "properties": {

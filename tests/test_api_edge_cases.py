@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from conftest import DEMO_USER, INITIAL_BALANCE_CENTS, CatalogItem
+from conftest import DEMO_USER, INITIAL_BALANCE, CatalogItem
 
 
 def _create(api: httpx.Client, item_id: str, policy: dict | None = None) -> dict:
@@ -32,9 +32,9 @@ class TestDoubleComplete:
     def test_double_complete_does_not_double_credit(self, api: httpx.Client, cheapest: CatalogItem, reset_balance):
         co = _create(api, cheapest.id)
         _complete(api, co["id"])
-        bal_after_first = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["balance_cents"]
+        bal_after_first = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["credits"]
         api.post(f"/checkout_sessions/{co['id']}/complete", json={})
-        bal_after_second = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["balance_cents"]
+        bal_after_second = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["credits"]
         assert bal_after_first == bal_after_second
 
 

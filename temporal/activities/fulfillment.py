@@ -89,19 +89,19 @@ async def fulfill_payment(input: FulfillInput) -> FulfillResult:
         input.db_path,
         payment_intent_id=input.payment_intent_id,
         user_id=input.user_id,
-        tokens=input.amount_cents,
+        tokens=input.total_tokens,
     )
 
     if not was_new:
         log.info(
-            "FULFILL %s — already processed (balance=$%.2f)",
-            input.payment_intent_id, new_bal / 100,
+            "FULFILL %s — already processed (balance=%d credits)",
+            input.payment_intent_id, new_bal,
         )
         return FulfillResult(new_balance=new_bal, was_new=False)
 
     log.info(
-        "FULFILL %s — credited $%.2f (balance=$%.2f)",
-        input.payment_intent_id, input.amount_cents / 100, new_bal / 100,
+        "FULFILL %s — credited %d credits (balance=%d)",
+        input.payment_intent_id, input.total_tokens, new_bal,
     )
 
     credit_grant_id = None

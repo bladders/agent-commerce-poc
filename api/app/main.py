@@ -514,21 +514,21 @@ def _fulfill_payment(db_path: str, sess: CheckoutSession, pi_id: str) -> None:
     (production path). Safe to call twice — the ledger is idempotent
     on payment_intent_id.
 
-    Credits the monetary amount (cents) to the ledger, NOT token count,
-    so the balance stays in consistent cents units.
+    Credits the token/credit count to the ledger (e.g. buying "10 Credits"
+    adds 10 to the balance, not the dollar amount).
     """
-    amount_cents = sess.total_amount
+    credits = sess.total_tokens
     new_bal, was_new = add_tokens_idempotent(
         db_path,
         payment_intent_id=pi_id,
         user_id=sess.user_id,
-        tokens=amount_cents,
+        tokens=credits,
     )
     if not was_new:
-        log.info("FULFILL %s — already processed (balance=$%.2f)", pi_id, new_bal / 100)
+        log.info("FULFILL %s — already processed (balance=%d credits)", pi_id, new_bal)
         return
 
-    log.info("FULFILL %s — credited $%.2f (balance=$%.2f)", pi_id, amount_cents / 100, new_bal / 100)
+    log.info("FULFILL %s — credited %d credits (balance=%d)", pi_id, credits, new_bal)
 
     try:
         cust_id = ensure_customer(sess.user_id)
@@ -548,20 +548,20 @@ def _fulfill_payment(db_path: str, sess: CheckoutSession, pi_id: str) -> None:
         log.warning("FULFILL %s — Credit Grant creation skipped: %s", pi_id, e)
 
 
-def _reverse_payment(db_path: str, pi_id: str, user_id: str, amount_cents: int) -> None:
+def _reverse_payment(db_path: str, pi_id: str, user_id: str, amount: int = 0) -> None:
     """Reverse fulfillment on refund: deduct SQLite ledger + void Credit Grant.
 
-    amount_cents is the monetary value to reverse (the ledger's idempotency
-    will use the originally-credited amount from processed_payments).
+    The ledger's idempotency uses the originally-credited amount from
+    processed_payments, so `amount` is only for logging.
     """
     new_bal, was_applied = deduct_tokens(
         db_path,
         payment_intent_id=pi_id,
         user_id=user_id,
-        tokens=amount_cents,
+        tokens=amount,
     )
     if was_applied:
-        log.info("REVERSE %s — deducted $%.2f (balance=$%.2f)", pi_id, amount_cents / 100, new_bal / 100)
+        log.info("REVERSE %s — deducted credits (balance=%d)", pi_id, new_bal)
     else:
         log.info("REVERSE %s — already reversed or never credited", pi_id)
 
@@ -754,17 +754,17 @@ def read_balance(
     bal = get_balance(db_path, user_id)
     return {
         "user_id": user_id,
-        "balance_cents": bal,
-        "balance_display": f"${bal / 100:.2f}",
+        "credits": bal,
+        "balance_display": f"{bal} credits",
     }
 
 
-DEMO_SESSION_BALANCE = 2000  # $20.00 in cents
+DEMO_SESSION_BALANCE = 20  # 20 credits
 
 
 class ResetBalanceBody(BaseModel):
     user_id: str = "demo_user"
-    amount: int = Field(default=DEMO_SESSION_BALANCE, description="Balance in cents to reset to")
+    amount: int = Field(default=DEMO_SESSION_BALANCE, description="Number of credits to reset to")
 
 
 @app.post("/api/v1/reset-balance", dependencies=[Depends(require_bearer)])
@@ -773,18 +773,18 @@ def reset_balance(
     db_path: Annotated[str, Depends(get_db_path)] = ...,
 ) -> dict:
     new_bal = set_balance(db_path, req.user_id, req.amount)
-    log.info("RESET-BALANCE user=%s → %d cents ($%.2f)", req.user_id, new_bal, new_bal / 100)
+    log.info("RESET-BALANCE user=%s → %d credits", req.user_id, new_bal)
     return {"user_id": req.user_id, "balance": new_bal}
 
 
 # ---------------------------------------------------------------------------
-# Consume (token burn — deducts SQLite balance in cents)
+# Consume (credit burn — deducts credits from the ledger)
 # ---------------------------------------------------------------------------
 
 
 class ConsumeBody(BaseModel):
     user_id: str = "demo_user"
-    tokens: int = Field(ge=1, description="Amount in cents to consume")
+    tokens: int = Field(ge=1, description="Number of credits to consume")
     reason: str = "llm_usage"
 
 

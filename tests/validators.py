@@ -18,7 +18,7 @@ def assert_balance_is(api: httpx.Client, expected_cents: int, tolerance: int = 0
     """Assert the ledger balance equals expected (within tolerance). Returns actual."""
     r = api.get("/api/v1/balance", params={"user_id": DEMO_USER})
     r.raise_for_status()
-    actual = r.json()["balance_cents"]
+    actual = r.json()["credits"]
     assert abs(actual - expected_cents) <= tolerance, (
         f"Balance mismatch: expected ${expected_cents/100:.2f} "
         f"(±${tolerance/100:.2f}), got ${actual/100:.2f}"
@@ -30,7 +30,7 @@ def assert_balance_decreased(api: httpx.Client, before: int) -> int:
     """Assert the ledger balance is strictly less than `before`. Returns actual."""
     r = api.get("/api/v1/balance", params={"user_id": DEMO_USER})
     r.raise_for_status()
-    actual = r.json()["balance_cents"]
+    actual = r.json()["credits"]
     assert actual < before, (
         f"Balance should have decreased from ${before/100:.2f}, but is ${actual/100:.2f}"
     )
@@ -41,7 +41,7 @@ def assert_balance_increased(api: httpx.Client, before: int) -> int:
     """Assert the ledger balance is strictly greater than `before`. Returns actual."""
     r = api.get("/api/v1/balance", params={"user_id": DEMO_USER})
     r.raise_for_status()
-    actual = r.json()["balance_cents"]
+    actual = r.json()["credits"]
     assert actual > before, (
         f"Balance should have increased from ${before/100:.2f}, but is ${actual/100:.2f}"
     )
@@ -52,7 +52,7 @@ def assert_agent_balance_consistent(resp: AgentResponse, api: httpx.Client) -> N
     """The balance returned by the agent should match the ledger."""
     if resp.balance is None:
         return
-    ledger = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["balance_cents"]
+    ledger = api.get("/api/v1/balance", params={"user_id": DEMO_USER}).json()["credits"]
     assert resp.balance == ledger, (
         f"Agent balance ${resp.balance/100:.2f} != ledger ${ledger/100:.2f}"
     )
