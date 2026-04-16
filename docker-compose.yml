@@ -1,0 +1,95 @@
+services:
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-db
+    depends_on:
+      temporal-db:
+        condition: service_healthy
+
+  temporal-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=temporal
+      - POSTGRES_PASSWORD=temporal
+    volumes:
+      - temporal_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    ports:
+      - "8233:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+
+  temporal-worker:
+    build: ./temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - DATABASE_PATH=/data/ledger.db
+    volumes:
+      - ledger_data:/data
+    depends_on:
+      - api
+    restart: on-failure
+
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_PATH=/data/ledger.db
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - TEMPORAL_ADDRESS=temporal:7233
+    volumes:
+      - ledger_data:/data
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - temporal
+
+  agent:
+    build: ./agent
+    ports:
+      - "8080:8080"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - SELLER_API_URL=http://api:8000
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - AGENT_MODE=server
+    depends_on:
+      - api
+
+  web:
+    build: ./web
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_PROXY_TARGET=http://api:8000
+      - VITE_AGENT_PROXY_TARGET=http://agent:8080
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    depends_on:
+      - api
+      - agent
+
+volumes:
+  ledger_data: {}
+  web_node_modules: {}
+  temporal_db_data: {}

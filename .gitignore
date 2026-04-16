@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Node
+node_modules/
+web/dist/
+
+# SQLite
+*.sqlite3
+*.db
+api/ledger.db
+
+# Test artifacts
+tests/test_report.json
+tests/junit_*.xml
+
+# OS
+.DS_Store
+Thumbs.db
