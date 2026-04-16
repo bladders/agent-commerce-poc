@@ -226,6 +226,36 @@ const fmt = (cents: number, cur: string) =>
 
 const fmtUsd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
+/* ========== Reply text trimming (avoid duplicating what UI components show) ========== */
+
+function trimReplyForComponents(
+  text: string,
+  opts: { hasCatalog?: boolean; hasBalance?: boolean; hasRefund?: boolean; hasCheckouts?: boolean },
+): string {
+  let t = text;
+
+  if (opts.hasCatalog) {
+    t = t.replace(/(?:\d+\.\s+\*\*[^\n]+\n(?:\s+-[^\n]+\n?)*)+/g, "").trim();
+    t = t.replace(/(?:\|[^\n]+\|[\s\S]*?\|[^\n]+\|)/g, "").trim();
+  }
+
+  if (opts.hasBalance) {
+    t = t.replace(/(?:your (?:current )?balance (?:is|shows)\s*\d+\s*credits?\.?)/gi, "").trim();
+    t = t.replace(/(?:you (?:currently )?have (?:a balance of )?\d+\s*credits?\.?)/gi, "").trim();
+  }
+
+  if (opts.hasRefund) {
+    t = t.replace(/refund[^\n]*(?:\$[\d.]+|amount)[^\n]*/gi, "").trim();
+  }
+
+  if (opts.hasCheckouts) {
+    t = t.replace(/(?:[-•]\s+\*\*[^\n]+\n?)+/g, "").trim();
+  }
+
+  t = t.replace(/\n{3,}/g, "\n\n").trim();
+  return t;
+}
+
 /* ========== Balance Pill ========== */
 
 const fmtCredits = (n: number) => `${n} credit${n === 1 ? "" : "s"}`;
@@ -843,7 +873,17 @@ export default function App() {
             const refundData = m.role === "assistant" ? extractRefundData(m.trace) : null;
             const toolErrors = m.role === "assistant" ? extractToolErrors(m.trace) : [];
             const stripeData = m.role === "assistant" ? extractStripeIntrospection(m.trace) : [];
+            const hasStructured = !!(catalogItems || balanceData || refundData || (m.checkouts && m.checkouts.length));
             const hasWideContent = !!(catalogItems || stripeData.length);
+
+            const displayText = hasStructured
+              ? trimReplyForComponents(m.content, {
+                  hasCatalog: !!catalogItems,
+                  hasBalance: !!balanceData,
+                  hasRefund: !!refundData,
+                  hasCheckouts: !!(m.checkouts && m.checkouts.length),
+                })
+              : m.content;
 
             return (
               <div key={i} style={{ animation: "fadeIn 0.2s ease-out" }}>
@@ -860,7 +900,7 @@ export default function App() {
                       : "0 1px 4px rgba(0,0,0,0.06)",
                     whiteSpace: "pre-wrap", fontSize: "0.9rem", lineHeight: 1.6,
                   }}>
-                    {m.content}
+                    {displayText}
                     {catalogItems && (
                       <CatalogGrid items={catalogItems} onBuy={(item) => send(`I'd like to buy ${item.name}`)} />
                     )}
