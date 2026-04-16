@@ -18,13 +18,11 @@ class CheckoutInput:
     total_tokens: int
     currency: str = "usd"
     metadata: dict[str, str] = field(default_factory=dict)
-    stripe_secret_key: str = ""
     db_path: str = ""
 
 
 @dataclass
 class PaymentInput:
-    stripe_secret_key: str
     amount_cents: int
     currency: str
     metadata: dict[str, str]
@@ -60,7 +58,6 @@ class FulfillResult:
 
 @dataclass
 class RefundInput:
-    stripe_secret_key: str
     payment_intent_id: str
     checkout_session_id: str
     reason: str = ""

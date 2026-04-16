@@ -49,7 +49,6 @@ class CheckoutWorkflow:
         payment: PaymentResult = await workflow.execute_activity(
             "create_payment_intent",
             PaymentInput(
-                stripe_secret_key=input.stripe_secret_key,
                 amount_cents=input.total_cents,
                 currency=input.currency,
                 metadata=input.metadata,
@@ -112,7 +111,6 @@ class CheckoutWorkflow:
             refund: RefundResult = await workflow.execute_activity(
                 "process_refund",
                 RefundInput(
-                    stripe_secret_key=input.stripe_secret_key,
                     payment_intent_id=self.payment_intent_id,
                     checkout_session_id=input.checkout_session_id,
                     reason=self.refund_reason or "",

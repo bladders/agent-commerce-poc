@@ -33,7 +33,6 @@ class CheckoutInput:
     total_tokens: int
     currency: str = "usd"
     metadata: dict[str, str] = field(default_factory=dict)
-    stripe_secret_key: str = ""
     db_path: str = ""
 
 

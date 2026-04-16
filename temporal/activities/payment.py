@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import httpx
@@ -14,9 +15,17 @@ from temporal.shared import PaymentInput, PaymentResult
 log = logging.getLogger(__name__)
 
 
+def _get_stripe_key() -> str:
+    key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not key:
+        raise RuntimeError("STRIPE_SECRET_KEY not set in worker environment")
+    return key
+
+
 def _try_spt_test_helper(
-    stripe_secret_key: str, amount_cents: int, currency: str
+    amount_cents: int, currency: str
 ) -> str | None:
+    stripe_secret_key = _get_stripe_key()
     expires_at = int(time.time()) + 3600
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -41,7 +50,7 @@ def _try_spt_test_helper(
 @activity.defn
 async def create_payment_intent(input: PaymentInput) -> PaymentResult:
     """Create and confirm a Stripe PaymentIntent."""
-    stripe.api_key = input.stripe_secret_key
+    stripe.api_key = _get_stripe_key()
 
     common: dict = {
         "amount": input.amount_cents,
@@ -64,9 +73,7 @@ async def create_payment_intent(input: PaymentInput) -> PaymentResult:
             **kwargs,
         )
     else:
-        auto_spt = _try_spt_test_helper(
-            input.stripe_secret_key, input.amount_cents, input.currency
-        )
+        auto_spt = _try_spt_test_helper(input.amount_cents, input.currency)
         if auto_spt:
             log.info("Using auto-generated SPT %s", auto_spt)
             pi = stripe.PaymentIntent.create(

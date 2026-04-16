@@ -665,7 +665,6 @@ async def _try_temporal_complete(
                 total_tokens=sess.total_tokens,
                 currency=sess.currency,
                 metadata=metadata,
-                stripe_secret_key=settings.stripe_secret_key,
                 db_path=db_path,
             ),
         )

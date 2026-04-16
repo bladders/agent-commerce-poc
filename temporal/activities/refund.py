@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -19,6 +20,13 @@ from temporal.shared import (
 
 log = logging.getLogger(__name__)
 
+
+def _get_stripe_key() -> str:
+    key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not key:
+        raise RuntimeError("STRIPE_SECRET_KEY not set in worker environment")
+    return key
+
 _lock = threading.Lock()
 _customer_cache: dict[str, str] = {}
 
@@ -33,7 +41,7 @@ def _connect(path: str) -> sqlite3.Connection:
 @activity.defn
 async def process_refund(input: RefundInput) -> RefundResult:
     """Create a Stripe Refund for a PaymentIntent."""
-    stripe.api_key = input.stripe_secret_key
+    stripe.api_key = _get_stripe_key()
     refund = stripe.Refund.create(
         payment_intent=input.payment_intent_id,
         reason="requested_by_customer",
