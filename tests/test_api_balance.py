@@ -60,12 +60,15 @@ class TestConsume:
         r = api.get("/api/v1/balance", params={"user_id": DEMO_USER})
         assert r.json()["balance_cents"] == INITIAL_BALANCE_CENTS - 1000
 
-    def test_consume_insufficient_balance(self, api: httpx.Client, reset_balance):
+    def test_consume_insufficient_balance_caps(self, api: httpx.Client, reset_balance):
         r = api.post("/api/v1/consume", json={
             "user_id": DEMO_USER, "tokens": INITIAL_BALANCE_CENTS + 1, "reason": "too_much"
         })
-        assert r.status_code == 422
-        assert "Insufficient balance" in r.json()["detail"]
+        assert r.status_code == 200
+        data = r.json()
+        assert data["tokens_consumed"] == INITIAL_BALANCE_CENTS
+        assert data["capped"] is True
+        assert data["balance"] == 0
 
     def test_consume_exact_balance(self, api: httpx.Client, reset_balance):
         r = api.post("/api/v1/consume", json={

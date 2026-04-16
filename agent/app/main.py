@@ -301,7 +301,7 @@ def run_server() -> None:
                 usage = step.get("usage", {})
                 total_llm_tokens += (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
 
-        cost_cents = max(25, total_llm_tokens // 20)
+        cost_cents = max(10, total_llm_tokens // 100)
         burn_result = None
         try:
             from app.tools import acp_consume_tokens

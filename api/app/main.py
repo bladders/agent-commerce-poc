@@ -795,11 +795,19 @@ def consume_tokens(
     db_path: Annotated[str, Depends(get_db_path)] = ...,
 ) -> dict:
     current_balance = get_balance(db_path, req.user_id)
-    if current_balance < req.tokens:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Insufficient balance: have ${current_balance/100:.2f}, need ${req.tokens/100:.2f}",
+    actual_burn = min(req.tokens, current_balance)
+    if actual_burn <= 0:
+        log.info(
+            "CONSUME user=%s | tokens=0 (capped, balance empty) | reason=%s",
+            req.user_id, req.reason,
         )
+        return {
+            "user_id": req.user_id,
+            "consumed": 0,
+            "requested": req.tokens,
+            "balance": current_balance,
+            "capped": True,
+        }
 
     from app.ledger import _connect, _lock
 
@@ -808,7 +816,7 @@ def consume_tokens(
         try:
             conn.execute(
                 "UPDATE balances SET tokens = MAX(0, tokens - ?) WHERE user_id = ?",
-                (req.tokens, req.user_id),
+                (actual_burn, req.user_id),
             )
             row = conn.execute(
                 "SELECT tokens FROM balances WHERE user_id = ?", (req.user_id,),
@@ -819,15 +827,21 @@ def consume_tokens(
             conn.close()
 
     log.info(
-        "CONSUME user=%s | tokens=%d | reason=%s | balance=%d",
-        req.user_id, req.tokens, req.reason, new_balance,
+        "CONSUME user=%s | tokens=%d%s | reason=%s | balance=%d",
+        req.user_id, actual_burn,
+        f" (capped from {req.tokens})" if actual_burn < req.tokens else "",
+        req.reason, new_balance,
     )
-    return {
+    result: dict = {
         "user_id": req.user_id,
-        "tokens_consumed": req.tokens,
+        "tokens_consumed": actual_burn,
         "balance": new_balance,
         "reason": req.reason,
     }
+    if actual_burn < req.tokens:
+        result["capped"] = True
+        result["requested"] = req.tokens
+    return result
 
 
 # ---------------------------------------------------------------------------
