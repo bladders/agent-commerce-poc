@@ -48,12 +48,10 @@ own words). Always ask the user WHY they want to cancel before calling this.
 wants money back after payment succeeded. Pass the checkout_session_id and reason.
 - get_balance: check a user's current token balance (POC-specific).
 
-**Stripe account tools** — query the Stripe account directly:
+**Stripe account tools** — query the Stripe account (scoped to current user):
 - stripe_list_products, stripe_list_prices: see what's in the Stripe catalog
-- stripe_list_payment_intents: recent payment history
-- stripe_list_customers: customer records
-- stripe_get_account_info: account details
-- stripe_get_balance: available/pending balance
+- stripe_list_payment_intents: the current user's payment history (filtered by user_id)
+- stripe_get_account_info: public merchant details (country, currency)
 
 ## How to handle purchases
 

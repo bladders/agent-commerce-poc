@@ -180,54 +180,35 @@ def stripe_list_prices(product_id: str | None = None, limit: int = 10) -> dict:
     }
 
 
-def stripe_list_payment_intents(limit: int = 5) -> dict:
+def stripe_list_payment_intents(user_id: str = "demo_user", limit: int = 5) -> dict:
+    """List PaymentIntents scoped to a specific user via metadata filter."""
     _ensure_stripe_key()
-    pis = stripe.PaymentIntent.list(limit=limit)
-    return {
-        "payment_intents": [
-            {
+    results = []
+    for pi in stripe.PaymentIntent.list(limit=100).auto_paging_iter():
+        meta = pi.metadata.to_dict() if hasattr(pi.metadata, "to_dict") else dict(pi.metadata or {})
+        if meta.get("poc_user_id") == user_id:
+            results.append({
                 "id": pi.id,
                 "amount": pi.amount,
                 "currency": pi.currency,
                 "status": pi.status,
-                "metadata": dict(pi.metadata) if pi.metadata else {},
                 "created": pi.created,
-            }
-            for pi in pis.data
-        ]
-    }
-
-
-def stripe_list_customers(limit: int = 10) -> dict:
-    _ensure_stripe_key()
-    customers = stripe.Customer.list(limit=limit)
-    return {
-        "customers": [
-            {"id": c.id, "name": c.name, "email": c.email}
-            for c in customers.data
-        ]
-    }
+            })
+            if len(results) >= limit:
+                break
+    return {"payment_intents": results, "user_id": user_id}
 
 
 def stripe_get_account_info() -> dict:
+    """Return only public-safe merchant info (no balances, no customer data)."""
     _ensure_stripe_key()
-    acct = stripe.Account.retrieve()
+    try:
+        acct = stripe.Account.retrieve()
+    except stripe.PermissionError:
+        return {"error": "Insufficient key permissions to read account info"}
     return {
-        "id": acct.id,
-        "business_profile": dict(acct.business_profile) if acct.business_profile else {},
-        "charges_enabled": acct.charges_enabled,
-        "payouts_enabled": acct.payouts_enabled,
         "country": acct.country,
         "default_currency": acct.default_currency,
-    }
-
-
-def stripe_get_balance() -> dict:
-    _ensure_stripe_key()
-    bal = stripe.Balance.retrieve()
-    return {
-        "available": [{"amount": b.amount, "currency": b.currency} for b in bal.available],
-        "pending": [{"amount": b.amount, "currency": b.currency} for b in bal.pending],
     }
 
 
@@ -268,9 +249,7 @@ TOOL_FUNCTIONS = {
     "stripe_list_products": stripe_list_products,
     "stripe_list_prices": stripe_list_prices,
     "stripe_list_payment_intents": stripe_list_payment_intents,
-    "stripe_list_customers": stripe_list_customers,
     "stripe_get_account_info": stripe_get_account_info,
-    "stripe_get_balance": stripe_get_balance,
     "calculate": calculate,
 }
 
@@ -469,10 +448,11 @@ TOOL_SCHEMAS: list[dict] = [
         "type": "function",
         "function": {
             "name": "stripe_list_payment_intents",
-            "description": "List recent PaymentIntents from the Stripe account (payment history).",
+            "description": "List recent PaymentIntents for the current user (payment history, scoped by user_id).",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "user_id": {"type": "string", "description": "User id to filter by (default: demo_user)"},
                     "limit": {"type": "integer", "description": "Max results (default 5)"},
                 },
                 "required": [],
@@ -482,30 +462,8 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "stripe_list_customers",
-            "description": "List customers from the Stripe account.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "description": "Max results (default 10)"},
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "stripe_get_account_info",
-            "description": "Get info about the connected Stripe account (id, country, currency, etc.).",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "stripe_get_balance",
-            "description": "Get the Stripe account balance (available and pending amounts).",
+            "description": "Get public info about the merchant (country, currency).",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },

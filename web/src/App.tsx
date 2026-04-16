@@ -188,7 +188,7 @@ function extractToolErrors(trace?: TraceStep[]): ToolError[] {
 }
 
 type StripeIntrospection = {
-  type: "products" | "prices" | "account" | "balance" | "customers" | "payments";
+  type: "products" | "prices" | "account" | "payments";
   data: Record<string, unknown>;
 };
 
@@ -199,8 +199,6 @@ function extractStripeIntrospection(trace?: TraceStep[]): StripeIntrospection[] 
     stripe_list_products: "products",
     stripe_list_prices: "prices",
     stripe_get_account_info: "account",
-    stripe_get_balance: "balance",
-    stripe_list_customers: "customers",
     stripe_list_payment_intents: "payments",
   };
   for (const step of trace) {
