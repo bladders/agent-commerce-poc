@@ -34,7 +34,22 @@ cd agent-commerce-poc
 
 cp .env.example .env
 # Edit .env -- fill in STRIPE_SECRET_KEY and OPENAI_API_KEY
+```
 
+### Seed Stripe catalog
+
+The app pulls its product catalog from Stripe at startup. Run this once to create the token-pack products and prices in your Stripe test account:
+
+```bash
+pip install stripe
+python scripts/setup_stripe.py
+```
+
+This creates 5 products (10/25/50/100 credits + single token) with one-time prices. Safe to re-run -- it skips products that already exist.
+
+### Start services
+
+```bash
 docker compose up --build -d
 ```
 
@@ -190,6 +205,8 @@ agent-commerce-poc/
     worker.py           #   Worker entrypoint
     shared.py           #   Shared dataclasses
   web/                  # React split-screen UI
+  scripts/              # One-time setup helpers
+    setup_stripe.py     #   Seed Stripe with token-pack products/prices
   tests/                # Integration test suite (102 tests)
   docker-compose.yml    # All 7 services
   FINDINGS.md           # Design patterns discovered during development
