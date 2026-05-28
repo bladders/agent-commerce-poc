@@ -228,32 +228,68 @@ const fmtUsd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /* ========== Reply text trimming (avoid duplicating what UI components show) ========== */
 
+interface TrimResult {
+  text: string;
+  catalogWasListing: boolean;
+}
+
 function trimReplyForComponents(
   text: string,
   opts: { hasCatalog?: boolean; hasBalance?: boolean; hasRefund?: boolean; hasCheckouts?: boolean },
-): string {
+): TrimResult {
   let t = text;
+  let catalogWasListing = false;
 
   if (opts.hasCatalog) {
-    t = t.replace(/(?:\d+\.\s+\*\*[^\n]+\n(?:\s+-[^\n]+\n?)*)+/g, "").trim();
+    const before = t;
+    t = t.replace(/(?:\d+\.\s+\*{0,2}[^\n]+\n(?:\s+-[^\n]+\n?)*)+/g, "").trim();
     t = t.replace(/(?:\|[^\n]+\|[\s\S]*?\|[^\n]+\|)/g, "").trim();
+    catalogWasListing = (before.length - t.length) > 100;
   }
 
   if (opts.hasBalance) {
-    t = t.replace(/(?:your (?:current )?balance (?:is|shows)\s*\d+\s*credits?\.?)/gi, "").trim();
-    t = t.replace(/(?:you (?:currently )?have (?:a balance of )?\d+\s*credits?\.?)/gi, "").trim();
+    t = t
+      .split(/(?<=\.)\s+|(?<=!)\s+|\n/)
+      .filter((s) => !/\d+\s*\*{0,2}\s*credits?\b/i.test(s))
+      .join(" ")
+      .trim();
   }
 
   if (opts.hasRefund) {
-    t = t.replace(/refund[^\n]*(?:\$[\d.]+|amount)[^\n]*/gi, "").trim();
+    t = t
+      .split(/(?<=\.)\s+|(?<=!)\s+|\n/)
+      .filter((s) => !/refund/i.test(s) || !/(\$[\d.]+|\d+\s*credits?)/i.test(s))
+      .join(" ")
+      .trim();
   }
 
   if (opts.hasCheckouts) {
-    t = t.replace(/(?:[-•]\s+\*\*[^\n]+\n?)+/g, "").trim();
+    t = t.replace(/(?:[-•]\s+\*{0,2}[^\n]+\n?)+/g, "").trim();
   }
 
   t = t.replace(/\n{3,}/g, "\n\n").trim();
-  return t;
+  return { text: t, catalogWasListing };
+}
+
+/* ========== Simple markdown → JSX for chat text ========== */
+
+function renderMarkdown(text: string): React.ReactNode[] {
+  const lines = text.split("\n");
+  const nodes: React.ReactNode[] = [];
+  for (let li = 0; li < lines.length; li++) {
+    if (li > 0) nodes.push("\n");
+    const line = lines[li];
+    const parts = line.split(/(\*\*[^*]+\*\*)/g);
+    for (let pi = 0; pi < parts.length; pi++) {
+      const p = parts[pi];
+      if (p.startsWith("**") && p.endsWith("**")) {
+        nodes.push(<strong key={`${li}-${pi}`}>{p.slice(2, -2)}</strong>);
+      } else {
+        nodes.push(p);
+      }
+    }
+  }
+  return nodes;
 }
 
 /* ========== Balance Pill ========== */
@@ -572,6 +608,174 @@ function StripeIntrospectionCards({ items }: { items: StripeIntrospection[] }) {
 
 /* ========== Session Burn Bar ========== */
 
+/* ========== Ken Banner (startup diagnostics from /health endpoints) ========== */
+
+type HealthIssue = {
+  code: string;
+  severity: "blocker" | "warning" | "info";
+  message: string;
+  fix: string;
+};
+
+type SourcedIssue = HealthIssue & { source: "API" | "Agent" };
+
+function KenBanner() {
+  const [issues, setIssues] = useState<SourcedIssue[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setChecking(true);
+
+    const apiCheck = fetch(`${API_BASE}/health/config`)
+      .then((r) => r.json())
+      .then((j): SourcedIssue[] =>
+        ((j.issues ?? []) as HealthIssue[]).map((i) => ({ ...i, source: "API" as const }))
+      )
+      .catch((): SourcedIssue[] => [
+        {
+          source: "API",
+          code: "API_UNREACHABLE",
+          severity: "blocker",
+          message: "Can't reach the seller API at /health/config.",
+          fix: "Check `docker ps` — the api container may have crashed or be mid-restart. Inspect `docker logs agent-commerce-poc-api-1` for details.",
+        },
+      ]);
+
+    const agentCheck = fetch(`${AGENT_BASE}/agent/health`)
+      .then((r) => r.json())
+      .then((j): SourcedIssue[] =>
+        ((j.issues ?? []) as HealthIssue[]).map((i) => ({ ...i, source: "Agent" as const }))
+      )
+      .catch((): SourcedIssue[] => [
+        {
+          source: "Agent",
+          code: "AGENT_UNREACHABLE",
+          severity: "blocker",
+          message: "Can't reach the chat agent at /health.",
+          fix: "Check `docker ps` — the agent container may have crashed. Inspect `docker logs agent-commerce-poc-agent-1` for details.",
+        },
+      ]);
+
+    Promise.all([apiCheck, agentCheck]).then(([a, b]) => {
+      if (cancelled) return;
+      setIssues([...a, ...b]);
+      setChecking(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  if (checking || issues.length === 0) return null;
+
+  const blockerCount = issues.filter((i) => i.severity === "blocker").length;
+  const warnCount = issues.filter((i) => i.severity === "warning").length;
+  const infoCount = issues.filter((i) => i.severity === "info").length;
+
+  const headerBg =
+    blockerCount > 0 ? "#7f1d1d" : warnCount > 0 ? "#78350f" : "#1e3a8a";
+
+  const headline =
+    blockerCount > 0
+      ? `Hi Ken — ${blockerCount} blocker${blockerCount === 1 ? "" : "s"} detected${
+          warnCount + infoCount > 0
+            ? ` (plus ${warnCount + infoCount} other note${warnCount + infoCount === 1 ? "" : "s"})`
+            : ""
+        }. The app won't work properly until you fix these.`
+      : warnCount > 0
+        ? `Hi Ken — ${warnCount} warning${warnCount === 1 ? "" : "s"} detected. The app may misbehave.`
+        : `Hi Ken — ${infoCount} note${infoCount === 1 ? "" : "s"} about your setup.`;
+
+  const sevTag = { blocker: "BLOCKER", warning: "WARN", info: "INFO" } as const;
+  const sevColor = { blocker: "#fecaca", warning: "#fde68a", info: "#bfdbfe" } as const;
+
+  return (
+    <div
+      style={{
+        background: headerBg,
+        color: "#fff",
+        padding: "12px 24px",
+        borderBottom: "1px solid rgba(0,0,0,0.25)",
+        fontFamily:
+          "'Inter', system-ui, -apple-system, sans-serif",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 10,
+          gap: 12,
+        }}
+      >
+        <strong style={{ fontSize: "0.92rem" }}>{headline}</strong>
+        <button
+          type="button"
+          onClick={() => setRefreshKey((k) => k + 1)}
+          style={{
+            background: "rgba(255,255,255,0.15)",
+            color: "#fff",
+            border: "1px solid rgba(255,255,255,0.3)",
+            borderRadius: 4,
+            padding: "4px 10px",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          Re-check
+        </button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {issues
+          .slice()
+          .sort(
+            (a, b) =>
+              ({ blocker: 0, warning: 1, info: 2 }[a.severity] -
+                { blocker: 0, warning: 1, info: 2 }[b.severity])
+          )
+          .map((issue, i) => (
+            <div
+              key={`${issue.source}-${issue.code}-${i}`}
+              style={{
+                fontSize: "0.82rem",
+                lineHeight: 1.5,
+                padding: "8px 12px",
+                background: "rgba(0,0,0,0.22)",
+                borderRadius: 4,
+                borderLeft: `3px solid ${sevColor[issue.severity]}`,
+              }}
+            >
+              <div>
+                <span
+                  style={{
+                    color: sevColor[issue.severity],
+                    fontWeight: 700,
+                    marginRight: 8,
+                  }}
+                >
+                  [{sevTag[issue.severity]}]
+                </span>
+                <span style={{ opacity: 0.7, marginRight: 8 }}>
+                  {issue.source} / {issue.code}
+                </span>
+                <span>{issue.message}</span>
+              </div>
+              <div style={{ marginTop: 4, opacity: 0.88, fontSize: "0.78rem" }}>
+                <strong>Fix:</strong> {issue.fix}
+              </div>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
 function SessionBurnBar({ spent, total }: { spent: number; total: number }) {
   const pct = Math.min(100, (spent / total) * 100);
   const color = pct > 75 ? "#dc2626" : pct > 40 ? "#d97706" : "#0369a1";
@@ -680,7 +884,20 @@ export default function App() {
       });
       if (!r.ok) {
         const errText = await r.text();
-        setMessages((m) => [...m, { role: "assistant", content: `Error: ${errText}` }]);
+        let enriched = `Error: ${errText}`;
+        try {
+          const hr = await fetch(`${AGENT_BASE}/agent/health`);
+          const h = await hr.json();
+          const blockers = ((h.issues ?? []) as HealthIssue[]).filter((i) => i.severity === "blocker");
+          if (blockers.length > 0) {
+            enriched =
+              `Hi Ken — chat failed (HTTP ${r.status}). The agent service is reporting ${blockers.length} blocker${blockers.length === 1 ? "" : "s"}:\n\n` +
+              blockers.map((b) => `[${b.code}] ${b.message}\nFix: ${b.fix}`).join("\n\n");
+          }
+        } catch {
+          /* health unreachable too — keep original error */
+        }
+        setMessages((m) => [...m, { role: "assistant", content: enriched }]);
         return;
       }
       const j = await r.json();
@@ -800,7 +1017,9 @@ export default function App() {
   const allTrace = messages.flatMap((m) => (m.trace || []).map((t) => ({ ...t, _msg: m })));
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+      <KenBanner />
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       {/* ===== Left: Chat ===== */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: "#f8fafc" }}>
         <header style={{
@@ -874,50 +1093,65 @@ export default function App() {
             const toolErrors = m.role === "assistant" ? extractToolErrors(m.trace) : [];
             const stripeData = m.role === "assistant" ? extractStripeIntrospection(m.trace) : [];
             const hasStructured = !!(catalogItems || balanceData || refundData || (m.checkouts && m.checkouts.length));
-            const hasWideContent = !!(catalogItems || stripeData.length);
 
-            const displayText = hasStructured
+            const trimmed = hasStructured
               ? trimReplyForComponents(m.content, {
                   hasCatalog: !!catalogItems,
                   hasBalance: !!balanceData,
                   hasRefund: !!refundData,
                   hasCheckouts: !!(m.checkouts && m.checkouts.length),
                 })
-              : m.content;
+              : { text: m.content, catalogWasListing: false };
+
+            const displayText = trimmed.text;
+            const showCatalog = !!catalogItems;
+            const showBubble = displayText.length > 0;
 
             return (
               <div key={i} style={{ animation: "fadeIn 0.2s ease-out" }}>
-                <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
-                  <div style={{
-                    maxWidth: hasWideContent ? "100%" : "75%",
-                    padding: "12px 16px", borderRadius: 16,
-                    background: m.role === "user"
-                      ? "linear-gradient(135deg, #0369a1, #0284c7)"
-                      : "#fff",
-                    color: m.role === "user" ? "#fff" : "#1e293b",
-                    boxShadow: m.role === "user"
-                      ? "0 2px 8px rgba(3,105,161,0.25)"
-                      : "0 1px 4px rgba(0,0,0,0.06)",
-                    whiteSpace: "pre-wrap", fontSize: "0.9rem", lineHeight: 1.6,
-                  }}>
-                    {displayText}
-                    {catalogItems && (
-                      <CatalogGrid items={catalogItems} onBuy={(item) => send(`I'd like to buy ${item.name}`)} />
-                    )}
-                    {balanceData && (
-                      <BalanceInline credits={balanceData.credits} />
-                    )}
-                    {refundData && (
-                      <RefundInline data={refundData} />
-                    )}
-                    {toolErrors.length > 0 && (
-                      <ErrorAlerts errors={toolErrors} />
-                    )}
-                    {stripeData.length > 0 && (
-                      <StripeIntrospectionCards items={stripeData} />
-                    )}
+                {showBubble && (
+                  <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                    <div style={{
+                      maxWidth: "75%",
+                      padding: "12px 16px", borderRadius: 16,
+                      background: m.role === "user"
+                        ? "linear-gradient(135deg, #0369a1, #0284c7)"
+                        : "#fff",
+                      color: m.role === "user" ? "#fff" : "#1e293b",
+                      boxShadow: m.role === "user"
+                        ? "0 2px 8px rgba(3,105,161,0.25)"
+                        : "0 1px 4px rgba(0,0,0,0.06)",
+                      whiteSpace: "pre-wrap", fontSize: "0.9rem", lineHeight: 1.6,
+                    }}>
+                      {m.role === "assistant" ? renderMarkdown(displayText) : displayText}
+                    </div>
                   </div>
-                </div>
+                )}
+                {showCatalog && (
+                  <div style={{ marginTop: showBubble ? 8 : 0, maxWidth: 620 }}>
+                    <CatalogGrid items={catalogItems} onBuy={(item) => send(`I'd like to buy ${item.name}`)} />
+                  </div>
+                )}
+                {balanceData && (
+                  <div style={{ marginTop: showBubble ? 8 : 0, maxWidth: 360 }}>
+                    <BalanceInline credits={balanceData.credits} />
+                  </div>
+                )}
+                {refundData && (
+                  <div style={{ marginTop: showBubble ? 8 : 0, maxWidth: 400 }}>
+                    <RefundInline data={refundData} />
+                  </div>
+                )}
+                {toolErrors.length > 0 && (
+                  <div style={{ marginTop: showBubble ? 8 : 0, maxWidth: 500 }}>
+                    <ErrorAlerts errors={toolErrors} />
+                  </div>
+                )}
+                {stripeData.length > 0 && (
+                  <div style={{ marginTop: showBubble ? 8 : 0 }}>
+                    <StripeIntrospectionCards items={stripeData} />
+                  </div>
+                )}
                 {m.role === "assistant" && m.costCredits != null && (
                   <div style={{
                     display: "flex", gap: 8, fontSize: "0.72rem", color: "#94a3b8",
@@ -1002,6 +1236,7 @@ export default function App() {
             <div ref={traceBottomRef} />
           </div>
         )}
+      </div>
       </div>
     </div>
   );

@@ -26,6 +26,108 @@ logging.basicConfig(
 log = logging.getLogger("agent")
 
 
+# ---------------------------------------------------------------------------
+# Startup diagnostics — populated by run_server(), refreshed by /health.
+# ---------------------------------------------------------------------------
+
+_agent_state: dict[str, Any] = {}
+
+
+def _check_openai_reachable() -> tuple[bool, str | None]:
+    """Validate the OpenAI key with a lightweight models.list() ping (5s timeout)."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        return False, "OPENAI_API_KEY not set"
+    try:
+        from openai import OpenAI
+        client = OpenAI(timeout=5.0)
+        client.models.list()
+        return True, None
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+def _check_seller_api_reachable() -> tuple[bool, str | None]:
+    """Ping the seller API's /health endpoint (5s timeout)."""
+    try:
+        from app.tools import _http
+        r = _http.get("/health", timeout=5.0)
+        r.raise_for_status()
+        return True, None
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+def _refresh_agent_state() -> None:
+    openai_ok, openai_err = _check_openai_reachable()
+    seller_ok, seller_err = _check_seller_api_reachable()
+    _agent_state["openai_key_present"] = bool(os.environ.get("OPENAI_API_KEY"))
+    _agent_state["openai_reachable"] = openai_ok
+    _agent_state["openai_error"] = openai_err
+    _agent_state["seller_api_url"] = os.environ.get("SELLER_API_URL", "http://localhost:8000")
+    _agent_state["seller_api_reachable"] = seller_ok
+    _agent_state["seller_api_error"] = seller_err
+    _agent_state["openai_model"] = os.environ.get("OPENAI_MODEL", "gpt-4o")
+
+
+def _compute_agent_issues() -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+
+    if not _agent_state.get("openai_key_present"):
+        issues.append({
+            "code": "OPENAI_KEY_MISSING",
+            "severity": "blocker",
+            "message": "OPENAI_API_KEY is not set — every /chat request will 500.",
+            "fix": "Add OPENAI_API_KEY=sk-… to .env (from https://platform.openai.com/api-keys), "
+                   "then `docker compose restart agent`.",
+        })
+    elif not _agent_state.get("openai_reachable"):
+        issues.append({
+            "code": "OPENAI_UNREACHABLE",
+            "severity": "blocker",
+            "message": f"OPENAI_API_KEY is set but the key check failed: {_agent_state.get('openai_error')}",
+            "fix": "Verify the key is active and has access to the configured model "
+                   f"({_agent_state.get('openai_model')}). Then `docker compose restart agent`.",
+        })
+
+    if not _agent_state.get("seller_api_reachable"):
+        issues.append({
+            "code": "SELLER_API_UNREACHABLE",
+            "severity": "warning",
+            "message": f"Cannot reach seller API at {_agent_state.get('seller_api_url')}: "
+                       f"{_agent_state.get('seller_api_error')}",
+            "fix": "The api service may still be booting (this check is one-shot at agent startup). "
+                   "If the issue persists, check `docker logs agent-commerce-poc-api-1`. "
+                   "Curl `http://localhost:8080/health` to re-run this check.",
+        })
+
+    return issues
+
+
+def _log_agent_banner(issues: list[dict[str, str]]) -> None:
+    bar = "=" * 72
+    log.info(bar)
+    log.info("Agent Commerce POC — Agent startup preflight")
+    log.info(bar)
+    if not issues:
+        log.info("  All checks passed — agent is ready.")
+        log.info(bar)
+        return
+
+    severity_order = {"blocker": 0, "warning": 1, "info": 2}
+    markers = {"blocker": "[BLOCKER]", "warning": "[WARN]   ", "info": "[INFO]   "}
+    for item in sorted(issues, key=lambda i: severity_order[i["severity"]]):
+        log.info("  %s %s", markers[item["severity"]], item["message"])
+        log.info("            fix: %s", item["fix"])
+
+    blockers = [i for i in issues if i["severity"] == "blocker"]
+    log.info(bar)
+    if blockers:
+        log.info("Hi Ken — fix the [BLOCKER] items above before chatting. /chat will return 500 until they pass.")
+    else:
+        log.info("Hi Ken — the [WARN] items above are non-fatal but may surface in chat. Re-curl /health after fixing.")
+    log.info(bar)
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
@@ -143,6 +245,9 @@ def run_server() -> None:
         allow_headers=["*"],
     )
 
+    _refresh_agent_state()
+    _log_agent_banner(_compute_agent_issues())
+
     _sessions: dict[str, list[dict[str, Any]]] = {}
     _session_system_policy: dict[str, dict | None] = {}
     _session_user_policy: dict[str, dict | None] = {}
@@ -150,7 +255,19 @@ def run_server() -> None:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "mode": "server"}
+        _refresh_agent_state()
+        issues = _compute_agent_issues()
+        has_blocker = any(i["severity"] == "blocker" for i in issues)
+        return {
+            "status": "degraded" if has_blocker else "ok",
+            "mode": "server",
+            "openai_key_configured": _agent_state.get("openai_key_present", False),
+            "openai_reachable": _agent_state.get("openai_reachable", False),
+            "openai_model": _agent_state.get("openai_model"),
+            "seller_api_url": _agent_state.get("seller_api_url"),
+            "seller_api_reachable": _agent_state.get("seller_api_reachable", False),
+            "issues": issues,
+        }
 
     # -- System policy → baked into system prompt (immutable per session) --
 

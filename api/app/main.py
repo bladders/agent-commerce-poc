@@ -42,6 +42,102 @@ log = logging.getLogger(__name__)
 ACP_VERSION = "2026-01-30"
 
 # ---------------------------------------------------------------------------
+# Startup diagnostics — populated by startup(), read by /health/config.
+# ---------------------------------------------------------------------------
+
+_startup_state: dict[str, Any] = {}
+
+
+def _stripe_key_hint(key: str) -> str | None:
+    if not key:
+        return None
+    if key.startswith("sk_test_"):
+        return None
+    if key.startswith("rk_test_"):
+        return "Restricted test key detected — may lack permissions for Products / PaymentIntents / Customers. Recommend swapping for a standard sk_test_ key."
+    if key.startswith(("sk_live_", "rk_live_")):
+        return "LIVE-mode key detected. This POC must use a test-mode key (sk_test_…)."
+    return "Unrecognized key format — expected sk_test_… (standard test secret key)."
+
+
+def _compute_startup_issues() -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+
+    if not _startup_state.get("stripe_key_present"):
+        issues.append({
+            "code": "STRIPE_KEY_MISSING",
+            "severity": "blocker",
+            "message": "STRIPE_SECRET_KEY is not set — checkout will be unusable.",
+            "fix": "Copy .env.example to .env and paste a test secret key from "
+                   "https://dashboard.stripe.com/test/apikeys, then `docker compose restart api`.",
+        })
+    elif _startup_state.get("stripe_key_hint"):
+        issues.append({
+            "code": "STRIPE_KEY_FORMAT",
+            "severity": "warning",
+            "message": _startup_state["stripe_key_hint"],
+            "fix": "Replace STRIPE_SECRET_KEY in .env with a sk_test_… key, then `docker compose restart api`.",
+        })
+
+    catalog_err = _startup_state.get("catalog_load_error")
+    if catalog_err:
+        issues.append({
+            "code": "STRIPE_UNREACHABLE",
+            "severity": "blocker",
+            "message": f"Could not fetch catalog from Stripe: {catalog_err}",
+            "fix": "Verify STRIPE_SECRET_KEY is valid and has read access to Products / Prices, "
+                   "then `docker compose restart api`.",
+        })
+    elif _startup_state.get("stripe_key_present") and _startup_state.get("catalog_size", 0) == 0:
+        issues.append({
+            "code": "EMPTY_CATALOG",
+            "severity": "blocker",
+            "message": "Stripe returned 0 products — the UI will show nothing to buy and the agent will look confused.",
+            "fix": "From the project root on your host, run: `python scripts/setup_stripe.py` "
+                   "to seed the 5 token-pack products, then `docker compose restart api`.",
+        })
+
+    if not _startup_state.get("webhook_secret_present"):
+        issues.append({
+            "code": "WEBHOOK_SECRET_MISSING",
+            "severity": "info",
+            "message": "STRIPE_WEBHOOK_SECRET is not set — POSTs to /webhooks/stripe will return 500.",
+            "fix": "Optional for basic flow. To enable webhooks, run "
+                   "`stripe listen --forward-to localhost:8000/webhooks/stripe`, "
+                   "copy the printed whsec_… into .env, then `docker compose restart api`.",
+        })
+
+    return issues
+
+
+def _log_startup_banner(issues: list[dict[str, str]]) -> None:
+    bar = "=" * 72
+    log.info(bar)
+    log.info("Agent Commerce POC — API startup preflight")
+    log.info(bar)
+    if not issues:
+        log.info("  All checks passed — API is ready.")
+        log.info(bar)
+        return
+
+    severity_order = {"blocker": 0, "warning": 1, "info": 2}
+    markers = {"blocker": "[BLOCKER]", "warning": "[WARN]   ", "info": "[INFO]   "}
+    for item in sorted(issues, key=lambda i: severity_order[i["severity"]]):
+        log.info("  %s %s", markers[item["severity"]], item["message"])
+        log.info("            fix: %s", item["fix"])
+
+    blockers = [i for i in issues if i["severity"] == "blocker"]
+    warnings_ = [i for i in issues if i["severity"] == "warning"]
+    log.info(bar)
+    if blockers:
+        log.info("Hi Ken — fix the [BLOCKER] items above before retrying. The API is up but checkout will fail.")
+    elif warnings_:
+        log.info("Hi Ken — the [WARN] items above are non-fatal but may cause confusing behavior.")
+    else:
+        log.info("Hi Ken — the [INFO] items above are optional. The API is ready.")
+    log.info(bar)
+
+# ---------------------------------------------------------------------------
 # ACP checkout session (in-memory store) — supports multiple line items
 # ---------------------------------------------------------------------------
 
@@ -304,20 +400,33 @@ app.add_middleware(
 def startup() -> None:
     settings = get_settings()
     init_db(settings.database_path)
+
+    _startup_state["stripe_key_present"] = bool(settings.stripe_secret_key)
+    _startup_state["stripe_key_hint"] = _stripe_key_hint(settings.stripe_secret_key)
+    _startup_state["webhook_secret_present"] = bool(settings.stripe_webhook_secret)
+    _startup_state["temporal_configured"] = bool(settings.temporal_address)
+    _startup_state["catalog_size"] = 0
+    _startup_state["catalog_load_error"] = None
+
     if settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key
         log.info("Stripe configured (key prefix: %s…)", settings.stripe_secret_key[:12])
         try:
             load_catalog(settings.stripe_secret_key)
+            _startup_state["catalog_size"] = len(list_catalog())
         except Exception as e:
+            _startup_state["catalog_load_error"] = str(e)
             log.error("Failed to load catalog from Stripe: %s", e)
     else:
-        log.warning("STRIPE_SECRET_KEY is empty — set it in .env then restart")
+        log.warning("STRIPE_SECRET_KEY is empty — see preflight below")
+
     if settings.temporal_address:
         temporal_client.configure(settings.temporal_address)
         log.info("Temporal configured at %s", settings.temporal_address)
     else:
         log.info("Temporal not configured — using inline payment path")
+
+    _log_startup_banner(_compute_startup_issues())
 
 
 # ---------------------------------------------------------------------------
@@ -333,9 +442,16 @@ def health() -> dict:
 @app.get("/health/config")
 def health_config(settings: Annotated[Settings, Depends(get_settings)]) -> dict:
     key = settings.stripe_secret_key
+    issues = _compute_startup_issues()
+    has_blocker = any(i["severity"] == "blocker" for i in issues)
     return {
+        "status": "degraded" if has_blocker else "ok",
         "stripe_secret_key_configured": bool(key),
         "stripe_key_prefix": (key[:12] + "…") if key and len(key) >= 12 else None,
+        "catalog_items": _startup_state.get("catalog_size", 0),
+        "temporal_configured": _startup_state.get("temporal_configured", False),
+        "webhook_secret_configured": _startup_state.get("webhook_secret_present", False),
+        "issues": issues,
     }
 
 
